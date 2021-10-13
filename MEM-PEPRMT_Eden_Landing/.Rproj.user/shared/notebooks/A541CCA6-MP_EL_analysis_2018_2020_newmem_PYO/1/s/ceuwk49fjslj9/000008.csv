@@ -1,0 +1,7 @@
+"0",""
+"0","?legend  "
+"0","  "
+"0","    #Now save over the GPP with the mod GPP to get ready to run the Reco mod"
+"0","      data$daily_gpp_mod <- GPP_mod_EL"
+"0","       #export as csv file"
+"0","    #write.csv(data,'EL_data_GPP_mod.csv') "

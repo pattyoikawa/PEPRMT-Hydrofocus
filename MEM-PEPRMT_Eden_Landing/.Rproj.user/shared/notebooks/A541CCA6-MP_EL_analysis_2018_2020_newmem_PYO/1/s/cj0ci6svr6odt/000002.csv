@@ -1,0 +1,13 @@
+"0","y<- tribble("
+"0","  ~MEM_Variable, ~Equiv._PEPRMNT_C_Pool, ~PEPRMNT_Variable, ~theta_element,"
+"0","  ""Slow_OM"", ""Soil Organic Carbon (SOC) Pool"", ""S2"", ""theta[5]"","
+"0","  ""Fast_OM"", ""Labile Carbon Pool"", ""S1"", ""theta[6]"""
+"0",")"
+"0",""
+"0","kable(y)"
+"2","Registered S3 methods overwritten by 'htmltools':
+  method               from         
+  print.html           tools:rstudio
+  print.shiny.tag      tools:rstudio
+  print.shiny.tag.list tools:rstudio
+"

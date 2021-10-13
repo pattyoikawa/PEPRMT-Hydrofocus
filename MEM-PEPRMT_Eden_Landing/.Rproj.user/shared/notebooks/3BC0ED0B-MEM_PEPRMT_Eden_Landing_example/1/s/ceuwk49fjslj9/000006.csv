@@ -1,0 +1,4 @@
+"0","# Add a legend"
+"0","legend(100, 0, legend=c(""mod"", ""obs""),"
+"0","       #lty = c(1,2),"
+"0","       col=c(""red"", ""blue""))#, lty=1:2, cex=0.8)"

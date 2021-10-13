@@ -1,0 +1,2 @@
+"0","# Add a line"
+"0","lines(data$Day_of_year, data$CH4_gC_m2_day, type=""l"", pch=18, col=""blue"")#, type=""b"", lty=2)"

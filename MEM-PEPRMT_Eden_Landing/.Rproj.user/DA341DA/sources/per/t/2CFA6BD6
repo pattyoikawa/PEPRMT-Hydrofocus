@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1634157395720.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "347570808",
+    "id" : "2CFA6BD6",
+    "lastKnownWriteTime" : 1634160794,
+    "last_content_update" : 1634160794,
+    "path" : "~/Documents/GitHub/PEPRMT-Hydrofocus/MEM-PEPRMT_Eden_Landing/MEM_PEPRMT_Eden_Landing_example.Rmd",
+    "project_path" : "MEM_PEPRMT_Eden_Landing_example.Rmd",
+    "properties" : {
+        "cursorPosition" : "385,15",
+        "scrollLine" : "378"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_markdown"
+}
