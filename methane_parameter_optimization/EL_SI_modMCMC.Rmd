@@ -1,0 +1,561 @@
+---
+title: "Methane parameterization trial"
+author: "Michael Najarro"
+date: "3/22/2021"
+output: html_document
+---
+
+# Introduction
+
+This script is a test run of implementing the package FME's function `modMCMC`, which implements a delayed rejection adaptive monte carlo markov chain algorithm.
+
+## Goals
+I implement this chain in order to optimize the theta parameters of PEPRMT's methane component.
+
+I run PEPRMT CH4 using these optimized thetas to calculate population parameters for methane: mean and standard deviation.
+
+After, I take the last 5% of each markov chain to generate a set of theta vectors which I run through PEPRMT to generate sample statistics.
+
+The parameters and statistics allow me to calcualte confidence intervals for the population mean of methane flux.
+
+## data used for PEPRMT CH4
+
+The data used for PEPRMT Ch4 comes from `test_with_sulfate_inhibition_EL.R` found within the `Productions_Scripts` that is found locally on the Lab Dell Optiplex computer. In addition, I made a few updates to the R script and the PEPRMT CH4 script used:
+
+Changes made within `test_with_sulfate_inhibition_EL.R`:
+
+  1. I commented out the code within the NDVI down-scaling section that considers only soil depths within 300 centimeters.
+
+  2. on line 591, within the Reco section of the script, I changed out the calculation of theta[5] from a mean of the respired OM to a sum of the respired OM.
+
+Changes made to PEPRMT Ch4 script:
+
+  1. within the methane section, I've called upon a new PEPRMT Ch4 script, which I originally created here in the `Methane_Parameter_Optimization` project, titled `PEPRMT_CH4_7.2.2_SI.R`. This script corrects the calls upon S1 and S2 from the proper data source, instead of erroneously calling from the now defunct microsite calculation of S1 and S2.
+
+
+### Preevious versions of PEPRMT Ch4 data used.
+Note that all previous versions of PEPRMT CH4 used  an odler veersion of the MEM package `rCTM`. The outputs are different. I've left the old data sets for PEPRMTCH4 in the files, but they are no longer used. 
+
+In the SS CH4 script and in EL_SI_modMCMC script, PEPRMT CH4 is required to to run. However there are two different data sets within the data folder.
+
+`EL_dataprepared_CH4_SI.csv` was manually extracted from a partial run of `test_with_sulfate_inhibition_EL.R` found within the `Productions_Scripts` project. Although this data represents the most up-to-date data, I am not using it because it previously caused PEPRMT CH4 to produce zeros for all parameter but trans2, which is not used.
+
+For the purposes of testing FME, I used the data create from the project `MEM-PEPRMT_Eden_Landing`, script `MP_EL_Analysis_2018_2020_newmem.Rmd`. It is titled `revised_EL_CH4_prepared_data.csv`. Technically, this version of MEM-PEPRMT uses old versions of PEPRMT Reco and CH4, but I plan to use it because the  size of its S1 pool is quite large and in the past analyses,the data produced positive results.
+
+I also created a second version of `revised_EL_CH4_prepared_data.csv` titled `revised_EL_CH4_prepared_data2.csv`. I created this version to test how the presence of additional S2 values far greater than zero would impact peprmt ch4. 
+
+## Important notes on SS Helper Code script
+Their exists an RMD file titled `SS_helper_code` ** DO NOT RUN IT.**
+
+### What's in SS Helper Code?
+Within it, it contain two chunks of code. The first chunk of code develops the necessary error inputs for the sum of squares function. This code has already been run so no need to execute the chunk.
+
+The second chunk of code updates the data that will be fed into PEPRMT CH4, by modifying S2. Unfortunately, my initial attempts at running `revised_EL_CH4_prepared_data.csv` through the latest version of PEPRMT CH4 produces the same zero output as it did with `EL_dataprepared_CH4_SI.csv`. My understanding of the source of this error is explained in detail `EL_dataprepared_CH4_SI.csv`.     
+
+
+# Process
+
+## 1. Load Libraries
+
+```{r}
+library(pacman)
+p_load(R.matlab,
+       here,
+       tidyverse,
+       magrittr,
+       FME,
+       tictoc,
+       beepr)
+```
+
+
+## 2. Test run of the SS script
+
+I need to make sure that the sum of squares script works.
+
+```{r}
+# bring in required inputs
+#note: y2 is a data frame containing the methane,
+#   daily integral error (gap filled), and random error.
+error_set <- c("./data_sets/EL_ECV_ydata_18_20.csv")
+sulfate <- 87.99
+theta <- c(-34, 34, -34, 34, 34, 34, sulfate)
+#theta <- c(-60, 60, -60, 60, 60, 60, sulfate)
+#theta <- c(-13, 4, -13, 4, 13, 4, sulfate)
+
+#bring in script
+source("./PEPRMT_Scripts/SS_PEPRMT_CH4.R")
+
+# run the sum of squares script as a test
+ss(theta = theta,
+   sulfate = sulfate,
+   y = error_set,
+   wetland_type = 2)
+```
+
+
+## 3. FME: modfit function
+
+Here I apply the `modfit` function in order to get a sense fo the variance surrounding the model...??
+
+`modfit` will help generate values for the `modMCMC` inputs of `var0` and upper and lower bounds.
+
+```{r}
+pars <- c(theta,
+              sulfate,
+              y= error_set,
+              wetland_type = 2)
+
+#run `modfit`
+# fit<- modFit(f = ss,
+#        p = theta,
+#        sulfate = sulfate,
+#        y = y2,
+#        wetland_type = 2,
+#        lower = rep(-90, length(theta)), 
+#        upper = rep(90, length(theta)),
+#        method = "Nelder-Mead",
+#        jac = NULL,
+#        #control = list(),
+#        hessian = TRUE)
+```
+
+
+## 4. FME: modMCMC function
+
+Here we will open the package FME and execute the 
+method `modMCMC`, which will run a delayed-rejection, adaptive Monte Carlo Markov Chain, Metroplolis- Hastings Algorithm.
+
+I interpret the inputs to this method as follows:
+
+#### f
+a function that estimates the initial model of interest approximates observed measures, using either:
+        1. the log likelihood of the model of interest (like AIC, and approximates RSS for Gausian distributions)
+        
+        2. residuals between model and observed data
+
+#### p
+the parameters f depends on.
+
+#### jump
+the standard deviation of the proposal density or distribution, $Q(x'|x)$. `jump` determines how much the new parameter set (the distribution of the candidate state) will deviate from the old one (previous state's distribution).
+
+If jump is one value or a vector:
+ - new parameter values are generated by sampling a normal distribution with standard deviation equal to jump.
+
+ - A larger value will lead to larger jumps in the parameter space, but acceptance of new points can get very low. 
+
+ - Smaller jump lengths increase the acceptance rate, but the algorithm may move too slowly, and too many runs may be needed to scan the parameter space.
+
+If jump is NULL:
+ - then the jump length is taken as 10% of the parameter value as given in p. 
+
+If jump is a proposal covariance matrix:
+ - the new parameter values are generated by sampling a multidimensional normal distribution. It can be efficient to initialize jump using the parameter covariance as resulting from fitting the model (e.g. using modFit).
+ 
+If jump is an R-function:
+ - It must take as input the current values of the parameters and returns the new parameter values.
+
+
+#### prior
+By default, $-2*log(parameter \space prior \space probability)$ where the parameter prior probability is the numerator of your acceptance ratio, $p(x')$. 
+
+
+```{r}
+# run FME
+tic()
+paramod <- modMCMC(f = ss,
+        p = theta,
+        sulfate = sulfate,
+        y = error_set,
+        wetland_type = 2,
+        jump = .01,  #1,#.5,#.05, #numeric(length=length(theta)),
+        lower = c(-60, 0, -60, 0, 0, 0, 80),
+          #c(-25,0,-25,0,0,0,80),
+          #rep(-90, times= 7),#-90,
+        upper = c(0, 60, 0, 60, 60, 60, 95),
+          #c(35,30,35,30,30,30,95),
+          #rep(90, times=7),#90,
+        prior = NULL,
+        var0 = NULL,
+        wvar0 = NULL, 
+        n0 = NULL,
+        niter = 10000,#500000,#200000,#90 
+        outputlength = 10000,
+        #499000,#199000,#90
+        burninlength = 500,#10
+        updatecov = 100,#100,#niter,
+        covscale = 2.4^2/length(theta),
+        #2.4^2/length(p),
+        ntrydr = 2,
+        drscale = NULL,
+        verbose = TRUE)
+toc()
+beepr::beep(sound=2)
+```
+
+```{r}
+paramod$
+
+```
+
+## 5. Plot markov chains per parameter
+
+here i plot each parameter and then zoom in on the last 5% of jump steps to determine the limit, or to where the posterior distribution $\pi(x)$ converges per parameter.
+
+```{r}
+df_thetas <- as.data.frame(paramod$pars)
+colnames(df_thetas) <- c("t1", 
+                          "t2",
+                          "t3",
+                          "t4",
+                          "t5",
+                          "t6",
+                          "sulfate")
+
+df_thetas <- df_thetas %>%
+        mutate(step = c(1:nrow(df_thetas))) %>%
+        pivot_longer(.,
+                     c(t1,
+                       t2,
+                       t3,
+                       t4,
+                       t5,
+                       t6,
+                       sulfate),
+                     names_to = "parameter",
+                     values_to = "state")
+
+#Plot each parameter
+ggplot(data =df_thetas,
+       mapping=aes(x=step,
+                   y =state)) +
+        geom_line(mapping=aes(col=parameter))
+
+# Now plot up to the last 5% of the step values
+lv <- as.numeric(max(df_thetas$step)-.05*max(df_thetas$step))
+uv <- as.numeric(max(df_thetas$step))
+
+ggplot(data =df_thetas,
+       mapping=aes(x=step,
+                   y=state)) +
+        geom_line(mapping=aes(col=parameter)) +
+        coord_trans(xlim=c(lv,uv))
+```
+
+
+## 6. Estimate the convergence Limits
+
+The limits of each chain represent the population  parameter for each theta and suflate.
+
+### If convergence is achieved, apply the code below.
+
+Since each chain converged quite rapidly, let's discover the most represented values. Essentially jsut take the last row of practice as your theta vector.
+```{r}
+# first histogram; where is the general range of convergence?
+practice <- as.data.frame(paramod$pars)
+colnames(practice) <- c("t1", 
+                          "t2",
+                          "t3",
+                          "t4",
+                          "t5",
+                          "t6",
+                          "sulfate")
+
+hist1 <- apply(practice, MARGIN=2, FUN = hist)
+hist1
+
+pop_thetas <- practice %>%
+  slice_tail(.) %>%
+  as.numeric(.)
+```
+
+### if convergence isn't achieved apply the code below.
+
+To estimate the limit without calculus, create two histograms of the data, a broad scale, and fine scale closer to limit. The mode of values in the bin with greatest frequency represents the convergence.
+
+```{r}
+# first histogram; where is the general range of convergence?
+practice <- as.data.frame(paramod$pars)
+colnames(practice) <- c("t1", 
+                          "t2",
+                          "t3",
+                          "t4",
+                          "t5",
+                          "t6",
+                          "sulfate")
+
+hist1 <- apply(practice, MARGIN=2, FUN = hist )
+hist1
+```
+
+
+For the first theta parameter, we saw in the initial histogram that the most well represented values fell between -18 and -16. I now filter the data between lower and upper range of this popular bin. In the future I will automate the process.
+
+```{r}
+#for T1: larges frequency between -20 and -16.
+t1 <- practice %>%
+  select(t1) %>%
+  filter(between(t1, -18, -16) )
+
+hist(t1$t1, breaks = 40)
+```
+We can see that the bin between -16.56 and -16.57 has the highest density. So I will say that the limit of the T1 markov chain will be -16.57.
+
+Now repeat this process for the remaining theta values.
+
+```{r}
+two <- practice %>%
+  select(t2) %>%
+  filter(between(t2, 3, 5) )
+
+hist(two$t2, breaks=40)
+
+# Use 4.52 to 4.53 t2.
+```
+
+
+```{r}
+three <- practice %>%
+  select(t3) %>%
+  filter(between(t3, -8, -6) )
+
+hist(three$t3, breaks=40)
+
+# use -6.51 to -6.52 for t3. 
+```
+
+```{r}
+four <- practice %>%
+  select(t4) %>%
+  filter(between(t4, 0, 2) )
+
+hist(four$t4, breaks=40)
+
+#use 0.5 to 0.51
+```
+
+
+```{r}
+five <- practice %>%
+  select(t5) %>%
+  filter(between(t5, 7, 9) )
+
+hist(five$t5, breaks=40)
+
+#use 8.9 to 8.95
+```
+
+```{r}
+six <- practice %>%
+  select(t6) %>%
+  filter(between(t6, 0, 2) )
+
+hist(six$t6, breaks=40)
+
+#use .05 to .1
+```
+
+```{r}
+#for sulfate
+s <- practice %>%
+  select(sulfate) %>%
+  filter(between(sulfate, 82, 83))
+
+hist(s$sulfate, breaks=40)
+
+# use 82.21 - 82.22
+```
+
+I will always select the upper bound for each bin. Thus our population parameters for theta are:
+$$(-16.57, 4.53, -6.52, 0.41, 8.95, 0.1, 82.22)$$
+
+
+## 7. Run PEPRMT CH4 once with the population parameter thetas To get population mean of methane.
+
+
+```{r}
+#clean up environ first
+rm(t1,
+   two,
+   three,
+   four,
+   five,
+   six,
+   s,
+   hist1,
+   CH4_daily_step)
+
+#generate population thetas
+sulfate <- pop_thetas[7]#82.22#80.75#89.78
+#ptheta <- c(-16.57, 4.53, -6.52, 0.41, 8.95, 0.1, 82.22)
+  #c(-18.4 ,1.6, -14.72, 4.1, 3.6, 7.76, 80.75)
+  #c(-19.85, 7.04, -20, 0.38, 19.95, 14.07, sulfate)
+
+#now run peprmt
+data2 <- read_rds(file =here("data_sets", "PEPRMTCH4_4-23-21.rds"))#%>%
+                    #"./data_sets/revised_EL_CH4_prepared_data2.csv")%>%
+                    #select(-x1)
+                    #select(-X)
+
+source(here("PEPRMT_Scripts", "PEPRMT_CH4_7.2.2_SI.R"))
+  
+w <- CH4_daily_step(theta = pop_thetas, 
+                      #c(-34,34,-34,34,34,34,sulfate),
+                    data= data2,
+                    wetland_type = 2)
+
+#calculate popn parameter mean of methane
+pop_mean_methane <- mean(w$pulse_emission_total)
+
+#calculate popn parameter standard deviation of
+# methane
+pop_sd_methane <- sd(w$pulse_emission_total)
+
+
+#plot methane using popn parameter thetas
+library(R.matlab)
+library(here)
+obs <- read_csv(here("data_sets","EL_2018_2020_master_9_30_20.csv")) %>%
+  select(CH4_gC_m2_day) %>%
+  pull(.)
+
+W <- w %>%
+  mutate(obs = obs,
+         residual = obs - pulse_emission_total,
+         index = c(1:nrow(w))) %>%
+  rename(mod = pulse_emission_total) %>%
+  pivot_longer(.,c(mod, obs, residual),
+               names_to = "methane_source",
+               values_to = "measure")
+
+ggplot(data = W,
+       mapping = aes(x= index,
+                     y= measure,
+                     col = methane_source)) +
+  geom_line() +
+  labs(x = "Day of year",
+      y = expression(paste("CH4 exchange"," ","(grams C"," ", m^{-2},day^{-1},")"))) +
+  scale_colour_manual(labels= c("mod","obs","residual"),
+                      values=c("blue",
+                             "black",
+                             "grey"))
+
+```
+
+```{r}
+rm(lv,uv,y2,w,practice,df_thetas, practice )
+```
+
+
+## 8. Run PEPRMT 10k times using the 10k theta parameter vectors that approached convergence
+
+Now that you see where each theta parameter converges, select the last 10,000 theta values and run a for-loop that iterates PEPRMNT Ch4 using each theta set.
+
+Since I am still trying to construct the code, and the current run is only 10,000 total, I will sample the last 5% of each markov chain to obtain 500 vectors of theta to run through peprmt, which will generate an average ch4 per run. the average of the averages will represent our sample mean methane.
+
+```{r}
+# bring in pepermt ch4
+#source("./PEPRMT_Scripts/PEPRMT_CH4_sulfate_inhibition.R")
+
+# load in the:
+#  1. fme theta values
+g <- paramod$pars %>%
+  as.data.frame(.) %>%
+  slice(9025:9500) %>%
+  as.matrix(.)
+#gg <- as.matrix(g)
+  
+
+#2. a empty list to store theta vectors
+ok <- vector('list', length(g))#501)
+
+for(i in 1:nrow(g)){
+    a_row <- as.vector(g[i,])
+        
+    m <- CH4_daily_step(theta = a_row,
+                              data = data2,
+                              #x=1,
+                              wetland_type = 2)
+        
+    ok[[i]] <- mean(m$pulse_emission_total)
+}
+```
+
+
+## 9. Generate the summary statistics of the methane ouputs
+
+Here we calculate important sample statistics for methan emissions. 
+
+### Average Methane values
+Each methane emission vector from each PEPRMT output will be averaged (i.e the average of a pulse emission total column in a PEPRMT output). The collection of averages will represent a sample of methane emissions that will approximate the population parameter.
+
+```{r}
+#merge your iterative pulse emissions and average
+# each pulse emission set per day.
+ch4_outputs <- unlist(purrr::map(ok, mean))
+
+# obtain your sample mean.
+sample_methane_mean <- mean(ch4_outputs, na.rm=TRUE)
+
+# calculate the sample standard deviation.
+sample_methane_sd <- sd(ch4_outputs, na.rm=TRUE)
+```
+
+```{r}
+#clean up the environment
+rm(a_row,
+   i,
+   obs,
+   pars,
+   sulfate,
+   theta,
+   ptheta,
+   CH4_daily_step,
+   g,
+   m,
+   ok,
+   w,
+  # ch4_outputs
+  )
+```
+
+
+## 10. Identify the population parameters of theta, and use those to calcualte the population parameter average and standard deviation of methane.
+
+As DRAM sampled and moved erach step, it ideally converged towards some value. This limit represents the optimized value of each theta and sulfate value to use, given the model and data fed to it. Thus the limit of each Markov chain represents the population mean, and by the law of symmetry applied in DRAM, the variance over each markov chain represent's each population parameters variance and standard deviation when square rooted. 
+
+Thus we must identify the limit per chain and the population variacne per chain can be obtained from the FME outputs.
+
+
+
+## 11. Use the population parameters and sample statistics to calculate confidence intervals per sample average methane output.
+
+Here I create a function that calculates 95% Z confidence intervals using oure population parameters,  and sample statistics required for the interval.
+
+```{r}
+#obtain your sample size
+n <- sum(!is.na(ch4_outputs))
+#Z <- (sample_methane_mean - pop_mean_methane)/(pop_sd_methane/sqrt(n))
+
+#calculate a confidence interval for each parameter.
+conf <- function(statmean,
+                 stddev,
+                 n,
+                 pop_mean){
+  LB <- statmean - (1.96 * stddev/sqrt(n))
+  UB <- statmean + (1.96 * stddev/sqrt(n)) 
+  a <- paste0("95% Confidence Interval:", "(",round(LB, digits = 6), ",", round(UB, digits = 6), ")")
+  d <- paste0("population mean:", round(pop_mean, digits=6))
+  f <- paste0("population standard deviation:", round(stddev, digits=6) )
+
+  k <- c(a, d ,f)
+  cat(k, sep="\n")
+}
+
+conf(statmean = sample_methane_mean,
+     stddev = pop_sd_methane,
+     n = n,
+     pop_mean = pop_mean_methane)
+```
+

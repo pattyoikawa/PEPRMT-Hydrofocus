@@ -1,0 +1,50 @@
+---
+title: "Important Equations related to theta parameters of PEPRMT CH4"
+author: "Michael Najarro"
+date: "3/31/2021"
+output: html_document
+---
+
+# RCH4 DAMM Equation: PEPRMT Ch4
+
+methane production is calculated as follows:
+$$R_{CH4} = (\frac{Vmax_{SOC-CH4}*[C_{SOCavail}]}{kM_{SOC-CH4}+[C_{SOCavail}]} + \frac{Vmax_{labile-CH4}*[C_{labile-CH4}]}{kM_{labile-CH4}+[C_{labile}]} *f(WT)_{CH4} *f(WT_{wetlandage})$$
+where
+$Vmax_x$ see next section.
+$kM_x$, methanogenesis half-saturation concentrations for substrates.
+for SOC pool: M_km1 =theta[2]+2.2e-10
+for Labiale Carbon pool: M_km2 =theta[4]+1.5e-11
+$[C_{socavail}]$, the concentration of carbon within the SOC pool available for methanogenesis.
+$[C_{labile-ch4}]$, the concentration of carbon within the labile pool available for methanogenesis.
+$f(WT)_{CH4}$ a function that inhibits CH4 production at the time of
+flooding.
+$f(WT)_{wetlandage}$ a function that reduces methanogenesis via percent reduction as a function of wetland age (as it increases in age).
+
+### CH4 DAMM Oxidation Equation
+The total rate of methane oxidized by oxygen is calculated as
+$$O_{CH4} = \frac{Vmax_{oxi}*[CH4]}{kM_{oxi}+[CH4]}*f(WT)_{oxi}$$
+
+where
+$kM_{oxi}$, methanogenesis half-saturation concentration for oxidized CH4.
+M_km3 =theta[6]+253e-5 
+$[CH4]$, concentration of available of methane for oxidation.
+$f(WT)_{oxi}$ a function that reduces methanogenesis via percent reduction as a function of wetland age (as it increases in age).
+
+
+
+
+
+#sub functions within PEPRMT CH4
+
+### Arrhenius function, $Vmax_x$
+The maximum rate of enzyme reaction for a substrate x is
+$$ V max_x = \alpha_x * e^\frac{-Ea_{x}}{RT}$$
+$x$, gas or substrate of interest
+$\alpha_x$, pre-exponential factor; M_alpha1 = 9e10
+
+$(Ea_x)$,activation energy of the enzymatic reaction with the substrate
+for SOC pool: M_ea1 = (theta[1]+65.2)*1000
+for Labile Carbon pool: M_ea2 = (theta[3]+68)*1000
+
+$T$:air temperature
+$R$: the universal gas constant
